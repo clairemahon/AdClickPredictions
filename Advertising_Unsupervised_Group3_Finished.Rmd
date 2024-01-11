@@ -1,0 +1,672 @@
+---
+title: "Ad Click Analysis - Unsupervised Learning"
+output: html_notebook
+---
+
+
+#Ad Click Analysis Project
+#Unsupervised Learning Algorithms
+#Group 3
+
+#Libraries
+```{r}
+library(ggplot2)
+library(dplyr)
+library(pROC)
+library(openxlsx)
+library(readxl)
+library(ISLR)
+library(gridExtra)
+library(glmnet)
+library(mgcv)
+library(e1071)
+library(kernlab)
+library(rpart)
+library(caret)
+library(readr)
+
+# Install and load the randomForest package if not already installed
+install.packages("randomForest")
+library(randomForest)
+```
+
+
+```{r}
+adv <- read_csv("/Users/clairemahon/AI and ML Foundations/advertising.csv")
+View(adv)
+```
+#Clean Columns
+```{r}
+names(adv)[names(adv) == "Daily Time Spent on Site"] <- "Daily_Time_Spent_on_Site"
+names(adv)[names(adv) == "Area Income"] <- "Area_Income"
+names(adv)[names(adv) == "Daily Internet Usage"] <- "Daily_Internet_Usage"
+names(adv)[names(adv) == "Ad Topic Line"] <- "Ad_Topic_Line"
+names(adv)[names(adv) == "Clicked on Ad"] <- "Clicked_on_Ad"
+```
+
+```{r}
+colnames(adv)
+```
+
+#Set seed for code reproduceability 
+```{r}
+set.seed(123)
+```
+
+
+# Support Vector Classification
+```{r}
+#convert male into factor
+adv <- adv %>% 
+    mutate(
+            Male = factor(Male, levels = c(0, 1), labels = c('No', 'Yes'))
+           ) %>%
+na.omit()
+```
+
+```{r}
+# Inspect the data
+sample_n(adv, 3)
+```
+
+```{r}
+# Set up Repeated k-fold Cross Validation
+#not useful for now
+train_control <- trainControl(method="repeatedcv", number=10)
+```
+
+#svm linear classifier
+```{r}
+#convert outcome to Factor
+adv$Clicked_on_Ad <- factor(adv$Clicked_on_Ad, levels = c(0, 1))
+
+# Fit the model 
+# we are going to use:  Daily_Time_Spent_on_Site + Daily_Internet_Usage + Area_Income + Age as predictor variables, since the other group showed they were the best predictors
+svm1 <- train(Clicked_on_Ad ~Daily_Time_Spent_on_Site + Daily_Internet_Usage + Area_Income + Age, data = adv, method = "svmLinear", trControl = train_control,  preProcess = c("center","scale"))
+#View the model
+svm1
+
+```
+#Accuracy: 96.8% implies that the SVM model correctly predicted the outcome (Clicked on Ad or not) for approximately 96.8% of the observations in the dataset.
+#Kappa: 93.6% is high and indicates substantial agreement beyond what would be expected by random chance. This suggests that the model is performing well and is reliable.
+# Tuning Parameter 'C': 1 suggests a moderate regularization strength.
+# high accuracy and substantial agreement with the actual outcomes. seems to generalize well to new, unseen data.
+
+```{r}
+#now, the following R code compute SVM for a grid values of C and automatically choose the final model for predictions:
+
+# Fit the model 
+svm2 <- train(Clicked_on_Ad ~Daily_Time_Spent_on_Site + Daily_Internet_Usage + Area_Income + Age,  data=adv, method = "svmLinear", trControl = train_control,  preProcess = c("center","scale"), tuneGrid = expand.grid(C = seq(0.001, 2, length = 20)))
+#View the model
+svm2
+
+```
+
+
+```{r}
+# Find the combination that maximizes Accuracy
+svm2$results[which.max(svm2$results[,2]),]
+```
+
+#Now, svm2 has a c=0.4218421 with an accuracy of 0.97 and kappa of 0.94
+#better fit than svm2
+
+```{r}
+#Now, compute SVM using a Non-LINEAR classifier
+
+
+#using radial basis kernel
+# Fit the model 
+svm3 <- train(Clicked_on_Ad ~Daily_Time_Spent_on_Site + Daily_Internet_Usage + Area_Income + Age,data=adv, method="svmRadial", trControl = train_control, preProcess = c("center","scale"), tuneLength = 10)
+# Print the best tuning parameter sigma and C that maximizes model accuracy
+svm3$bestTune
+
+svm3
+```
+```{r}
+#depict result
+svm3$results[which.max(svm3$results[,2]),]
+```
+
+#accuraccy and kappa lower than previous model
+
+```{r}
+# Fit the model 
+svm4 <- train(Clicked_on_Ad ~Daily_Time_Spent_on_Site + Daily_Internet_Usage + Area_Income + Age,data=adv, method = "svmPoly", trControl = train_control, preProcess = c("center","scale"), tuneLength = 4)
+# Print the best tuning parameter sigma and C that maximizes model accuracy
+svm4$bestTune
+svm4
+```
+
+
+```{r}
+#depict result
+svm4$results[which.max(svm4$results[,2]),]
+```
+
+```{r}
+df<-tibble(Model=c('SVM Linear','SVM Linear w/ choice of cost','SVM Radial','SVM Poly'),Accuracy=c(svm1$results[2][[1]],svm2$results$Accuracy[2][[1]],svm3$results$Accuracy[2][[1]],svm4$results$Accuracy[2][[1]]))
+df %>% arrange(Accuracy)
+```
+
+#as we can see, the poly svm linear with choice of cost result in the best fit
+
+
+MODEL PERFORMANCE for SVMs
+
+```{r}
+# Load required libraries
+library(caret)
+
+# Set the seed for reproducibility
+set.seed(123)
+
+# Split the data into training and test sets
+index <- createDataPartition(adv$Clicked_on_Ad, p = 0.7, list = FALSE)
+train_data <- adv[index, ]
+test_data <- adv[-index, ]
+
+# Define your train control
+train_control <- trainControl(method = "cv", number = 10)
+
+
+# Make predictions on the test set svm1
+test_predictions_1 <- predict(svm1, newdata = test_data)
+test_predictions_2 <- predict(svm2, newdata = test_data)
+test_predictions_3 <- predict(svm3, newdata = test_data)
+test_predictions_4 <- predict(svm4, newdata = test_data)
+
+# Evaluate the model on the test set
+confusion_mat_test_1 <- confusionMatrix(test_predictions_1, test_data$Clicked_on_Ad)
+confusion_mat_test_2 <- confusionMatrix(test_predictions_2, test_data$Clicked_on_Ad)
+confusion_mat_test_3 <- confusionMatrix(test_predictions_3, test_data$Clicked_on_Ad)
+confusion_mat_test_4 <- confusionMatrix(test_predictions_4, test_data$Clicked_on_Ad)
+
+
+# Print the confusion matrix for the test set
+print(confusion_mat_test_1)
+print(confusion_mat_test_2)
+print(confusion_mat_test_3)
+print(confusion_mat_test_4)
+
+# Extract performance metrics for the test set
+accuracy_test_1 <- confusion_mat_test_1$overall["Accuracy"]
+precision_test_1 <- confusion_mat_test_1$byClass["Precision"]
+recall_test_1 <- confusion_mat_test_1$byClass["Recall"]
+f1_score_test_1 <- confusion_mat_test_1$byClass["F1"]
+
+accuracy_test_2 <- confusion_mat_test_2$overall["Accuracy"]
+precision_test_2 <- confusion_mat_test_2$byClass["Precision"]
+recall_test_2 <- confusion_mat_test_2$byClass["Recall"]
+f1_score_test_2 <- confusion_mat_test_2$byClass["F1"]
+
+accuracy_test_3 <- confusion_mat_test_3$overall["Accuracy"]
+precision_test_3 <- confusion_mat_test_3$byClass["Precision"]
+recall_test_3 <- confusion_mat_test_3$byClass["Recall"]
+f1_score_test_3 <- confusion_mat_test_3$byClass["F1"]
+
+
+accuracy_test_4 <- confusion_mat_test_4$overall["Accuracy"]
+precision_test_4 <- confusion_mat_test_4$byClass["Precision"]
+recall_test_4 <- confusion_mat_test_4$byClass["Recall"]
+f1_score_test_4 <- confusion_mat_test_4$byClass["F1"]
+
+
+# Print performance metrics for the test set
+cat("Test Set Accuracy svm1:", accuracy_test_1, "\n")
+cat("Test Set Precision svm1:", precision_test_1, "\n")
+cat("Test Set Recall svm1:", recall_test_1, "\n")
+cat("Test Set F1 Score svm1:", f1_score_test_1, "\n")
+
+cat("Test Set Accuracy svm2:", accuracy_test_2, "\n")
+cat("Test Set Precision svm2:", precision_test_2, "\n")
+cat("Test Set Recall svm2:", recall_test_2, "\n")
+cat("Test Set F1 Score sv2:", f1_score_test_2, "\n")
+
+
+cat("Test Set Accuracy svm3:", accuracy_test_3, "\n")
+cat("Test Set Precision svm3:", precision_test_3, "\n")
+cat("Test Set Recall svm3:", recall_test_3, "\n")
+cat("Test Set F1 Score svm3:", f1_score_test_3, "\n")
+
+cat("Test Set Accuracy svm4:", accuracy_test_4, "\n")
+cat("Test Set Precision svm4:", precision_test_4, "\n")
+cat("Test Set Recall svm4:", recall_test_4, "\n")
+cat("Test Set F1 Score svm4:", f1_score_test_4, "\n")
+
+
+```
+
+#Decision Tree Analysis
+
+```{r}
+adv
+```
+
+```{r}
+# Remove 'Ad Topic Line' from the dataframe and other non-numeric factors
+#adv$`Ad Topic Line` <- NULL
+#adv$City <- NULL
+#adv$Country <- NULL
+#adv$Timestamp <- NULL
+#adv$Male <- NULL
+
+dtree = subset(adv, select = -c(5, 6, 7, 8, 9)) #Eliminate "Ad.Topic.Line", "City", "Male, Country" as they are all non-numeric nominal datapoints, "Timestamp" as it is not an integer
+```
+
+```{r}
+str(dtree)
+```
+
+```{r}
+dim(dtree)
+```
+
+```{r}
+dtree$Clicked_on_Ad <- as.integer(dtree$Clicked_on_Ad) #1 is No, 2 is yes
+```
+
+```{r}
+str(dtree)
+```
+
+
+# Create train test split using the caret package 
+
+```{r}
+colnames(dtree) <- c("Daily_Time_Spent_on_Site","Age","Area_Income","Daily_Internet_Usage","Clicked_on_Ad")
+
+dtree$Clicked_on_Ad <- as.factor(dtree$Clicked_on_Ad)
+```
+
+```{r}
+set.seed(123)
+inTrain <- createDataPartition(y=dtree$Clicked_on_Ad, p=0.70, list=FALSE)
+train_set <- dtree[inTrain,]
+valid_set <- dtree[-inTrain,]
+```
+
+```{r}
+dim(train_set)
+```
+
+```{r}
+dim(valid_set)
+```
+
+```{r}
+head(dtree)
+```
+
+
+```{r}
+dt_model <- train(Clicked_on_Ad~ ., method="rpart", data = dtree)
+```
+
+```{r}
+class(dt_model) 
+```
+
+```{r}
+print(dt_model)
+```
+
+```{r}
+names(dt_model)
+```
+
+
+```{r}
+ls(dt_model)
+```
+
+```{r}
+dt_model$method
+```
+
+```{r}
+dt_model$modelType
+```
+
+```{r}
+dt_model$bestTune
+```
+
+```{r}
+dt_model$results
+```
+
+```{r}
+dt_model$finalModel
+```
+```{r}
+plot(dt_model)
+```
+
+```{r}
+var_imp <- varImp(dt_model, scale=FALSE)
+# by default varImp returns scaled results in the range 0-100, need to put scale=FALSE
+print(var_imp)
+```
+
+```{r}
+plot(var_imp, top=4)
+```
+
+
+```{r}
+library(rpart.plot)
+rpart.plot(dt_model$finalModel,extra="auto")
+```
+
+#Hypertuning the decision tree using cross validation
+
+
+```{r}
+trctrl <- trainControl(method = "cv", #cross validation
+                       number = 10)   #10-fold cross validation
+cp_grid <- data.frame(cp = seq(0.01, .20, length = 50))
+
+dt_01 <- train(Clicked_on_Ad ~., data = train_set, method = 'rpart',
+                 trControl = trctrl,      
+                 tuneGrid = cp_grid)
+dt_01
+```
+
+```{r}
+plot(dt_01)
+```
+
+
+```{r}
+library(rattle)
+```
+
+
+```{r}
+fancyRpartPlot(dt_01$finalModel, sub = NULL)
+```
+
+```{r}
+var_imp <- varImp(dt_01, scale=FALSE)
+# by default varImp returns scaled results in the range 0-100, need to put scale=FALSE
+print(var_imp)
+```
+
+```{r}
+plot(var_imp, top=4)
+```
+```{r}
+# Make predictions on the validation set
+dt_predictions <- predict(dt_01, newdata = valid_set)
+
+# Evaluate the model performance
+conf_matrix_dt <- table(dt_predictions, valid_set$Clicked_on_Ad)
+print(conf_matrix_dt)
+
+# Calculate accuracy
+accuracy_dt <- sum(diag(conf_matrix_dt)) / sum(conf_matrix_dt)
+print(paste("Accuracy:", accuracy_dt))
+
+# Calculate individual metrics
+true_positive_dt <- conf_matrix_dt[2, 2]
+true_negative_dt <- conf_matrix_dt[1, 1]
+false_positive_dt <- conf_matrix_dt[1, 2]
+false_negative_dt <- conf_matrix_dt[2, 1]
+
+# Precision
+precision_dt <- true_positive_dt / (true_positive_dt + false_positive_dt)
+
+# Recall (Sensitivity)
+recall_dt <- true_positive_dt / (true_positive_dt + false_negative_dt)
+
+# F1-Score
+f1_score_dt <- 2 * (precision_dt * recall_dt) / (precision_dt + recall_dt)
+
+# Print the metrics
+print(paste("Precision:", precision_dt))
+print(paste("Recall:", recall_dt))
+print(paste("F1-Score:", f1_score_dt))
+
+```
+
+
+#Random Forests
+
+```{r}
+# Split the data into training and testing sets (70-30 split)
+set.seed(123)  # Set seed for reproducibility
+train_index <- sample(1:nrow(adv), 0.7 * nrow(adv))
+train_data <- adv[train_index, ]
+test_data <- adv[-train_index, ]
+
+```
+
+```{r}
+# Ensure the response variable is a factor
+train_data$Clicked_on_Ad <- as.factor(train_data$Clicked_on_Ad)
+
+# Build the Random Forest model
+rf_model <- randomForest(factor(Clicked_on_Ad) ~ Daily_Time_Spent_on_Site + Age + Area_Income +
+                           Daily_Internet_Usage + Ad_Topic_Line + City + Male + Country,
+                         data = train_data, type = "classification")
+
+# Print a summary of the model
+print(rf_model)
+
+
+
+```
+
+```{r}
+# Make predictions on the test set
+rf_predictions <- predict(rf_model, test_data)
+
+```
+
+
+```{r}
+# Evaluate the model performance
+conf_matrix <- table(rf_predictions, test_data$Clicked_on_Ad)
+print(conf_matrix)
+
+# Calculate accuracy
+accuracy <- sum(diag(conf_matrix)) / sum(conf_matrix)
+print(paste("Accuracy:", accuracy))
+
+```
+
+```{r}
+print(conf_matrix)
+```
+
+```{r}
+#further performance metrics
+# Calculate individual metrics
+true_positive <- conf_matrix[2, 2]
+true_negative <- conf_matrix[1, 1]
+false_positive <- conf_matrix[1, 2]
+false_negative <- conf_matrix[2, 1]
+
+# Accuracy
+accuracy <- (true_positive + true_negative) / sum(conf_matrix)
+
+# Precision
+precision <- true_positive / (true_positive + false_positive)
+
+# Recall (Sensitivity)
+recall <- true_positive / (true_positive + false_negative)
+
+# F1-Score
+f1_score <- 2 * (precision * recall) / (precision + recall)
+
+# Print the metrics
+print(paste("Accuracy:", accuracy))
+print(paste("Precision:", precision))
+print(paste("Recall:", recall))
+print(paste("F1-Score:", f1_score))
+```
+
+```{r}
+library(randomForest)
+# Get feature importance
+feature_importance <- importance(rf_model)
+print(feature_importance)
+```
+
+
+#K-Nearest Neighbors
+
+#View data
+```{r}
+head(adv)
+```
+
+```{r}
+sum(is.na(adv))
+```
+
+```{r}
+advKnn = subset(adv, select = -c(5, 6, 8, 9)) #Eliminate "Ad.Topic.Line", "City", "Country" as they are all non-numeric nominal datapoints, "Timestamp" as it is not an integer
+```
+
+```{r}
+advKnn$Male <- as.numeric(advKnn$Male)
+```
+
+```{r}
+head(advKnn)
+```
+
+```{r}
+advKnn[, -6] <- scale(advKnn[, -6]) #Eliminate Clicked.on.Ad and scale
+```
+
+
+#Set seed and parition into test/train
+```{r}
+set.seed(123)
+validationIndex <- createDataPartition(advKnn$Clicked_on_Ad, p=0.70, list=FALSE)
+
+trainknn <- advKnn[validationIndex,] # 70% of data to training
+testknn <- advKnn[-validationIndex,] # remaining 30% for test
+
+```
+
+
+```{r}
+# Aligning factor levels between test and train
+trainknn$Clicked_on_Ad <- as.factor(trainknn$Clicked_on_Ad)
+testknn$Clicked_on_Ad <- factor(testknn$Clicked_on_Ad, levels = levels(trainknn$Clicked_on_Ad))
+
+```
+
+
+Choosing K-Value using the elbow method
+```{r}
+# Run algorithms using 10-fold cross validation
+trainControl <- trainControl(method="repeatedcv", number=10, repeats=3)
+metric <- "Accuracy"
+```
+
+Initial guess
+```{r}
+set.seed(123)
+fit.knn <- train(Clicked_on_Ad~., data=trainknn, method="knn",
+                 metric=metric ,trControl=trainControl)
+knn.k1 <- fit.knn$bestTune # keep this Initial k for testing with knn() function in next section
+print(fit.knn)
+```
+
+```{r}
+plot(fit.knn)
+```
+#Grid Search for best k value
+```{r}
+set.seed(123)
+grid <- expand.grid(.k=seq(1,20,by=1))
+fit.knn <- train(Clicked_on_Ad~., data=trainknn, method="knn", 
+                 metric=metric, tuneGrid=grid, trControl=trainControl)
+knn.k2 <- fit.knn$bestTune # keep this optimal k for testing with stand alone knn() function in next section
+print(fit.knn)
+
+```
+
+
+```{r}
+plot(fit.knn)
+```
+
+#Now let's run the prediction with our test set
+```{r}
+set.seed(123)
+prediction <- predict(fit.knn, newdata = testknn)
+cf <- confusionMatrix(prediction, testknn$Clicked_on_Ad)
+print(cf)
+```
+
+```{r}
+print(cf)
+```
+
+```{r}
+# Confusion matrix values
+TP <- 140
+TN <- 149
+FP <- 1
+FN <- 10
+
+# Accuracy
+accuracyknn <- (TP + TN) / (TP + FP + FN + TN)
+
+# Precision
+precisionknn <- TP / (TP + FP)
+
+# Recall (Sensitivity)
+recallknn <- TP / (TP + FN)
+
+# F1 Score
+f1_scoreknn <- 2 * (precision * recall) / (precision + recall)
+
+# Print the results
+cat("Accuracy:", accuracyknn, "\n")
+cat("Precision:", precisionknn, "\n")
+cat("Recall:", recallknn, "\n")
+cat("F1 Score:", f1_scoreknn, "\n")
+
+```
+
+#Model Conclusions and Comparisons
+```{r}
+#Print the metrics for SVMs
+print("SVM Results")
+cat("Accuracy svm3:", accuracy_test_3, "\n")
+cat("Precision svm3:", precision_test_3, "\n")
+cat("Recall svm3:", recall_test_3, "\n")
+cat("F1 Score svm3:", f1_score_test_3, "\n")
+
+
+# Print the metrics for Decision Trees
+print("Decision Tree Results")
+print(paste("Accuracy dt:", accuracy_dt))
+print(paste("Precision dt:", precision_dt))
+print(paste("Recall dt:", recall_dt))
+print(paste("F1-Score dt:", f1_score_dt))
+
+# Print the metrics for Random Forest
+print("Random Forest Results")
+print(paste("Accuracy rf_model:", accuracy))
+print(paste("Precision rf_model:", precision))
+print(paste("Recall rf_model:", recall))
+print(paste("F1-Score rf_model:", f1_score))
+
+#Print the metrics for KNN
+print("KNN Results")
+cat("Accuracy KNN:", accuracyknn, "\n")
+cat("Precision KNN:", precisionknn, "\n")
+cat("Recall KNN:", recallknn, "\n")
+cat("F1 Score KNN:", f1_scoreknn, "\n")
+
+```
+
+
